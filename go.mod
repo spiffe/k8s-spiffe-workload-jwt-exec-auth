@@ -1,4 +1,4 @@
-module github.com/spiffe/k8s-spiffe-workload-jwt-exec-auth/
+module github.com/spiffe/k8s-spiffe-workload-jwt-exec-auth
 
 go 1.22
 
