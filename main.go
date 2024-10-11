@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"os"
+	"fmt"
 	"log"
 	"time"
 
@@ -10,16 +11,9 @@ import (
 	"github.com/spiffe/go-spiffe/v2/workloadapi"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-
-	"k8s.io/client-go/pkg/apis/clientauthentication"
-	"k8s.io/cli-runtime/pkg/printers"
 )
 
 func main() {
-	cred := &clientauthentication.ExecCredential{
-		Status: &clientauthentication.ExecCredentialStatus {},
-	}
-
 	socketPath, ok := os.LookupEnv("SPIFFE_ENDPOINT_SOCKET")
 	if !ok {
 		socketPath = "unix:///tmp/spire-agent/public/api.sock"
@@ -30,8 +24,6 @@ func main() {
 		audience = "k8s"
 	}
 
-	cred.APIVersion = "client.authentication.k8s.io/v1"
-	cred.Kind = "ExecCredentials"
 	ctx := context.Background()
 
 	jwtSource, err := workloadapi.NewJWTSource(
@@ -50,10 +42,15 @@ func main() {
 	}
 
 	d := svid.Expiry.Sub(time.Now()) / 2
-	expiry := metav1.NewTime(svid.Expiry.Add(d))
-	cred.Status.ExpirationTimestamp = &expiry
-	cred.Status.Token = svid.Marshal()
-
-	y := printers.YAMLPrinter{}
-	y.PrintObj(cred, os.Stdout)
+	expiry, err := metav1.NewTime(svid.Expiry.Add(d)).MarshalJSON()
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Print("apiVersion: client.authentication.k8s.io/v1\n")
+	fmt.Print("kind: ExecCredential\n")
+	fmt.Print("spec:\n")
+	fmt.Print(" interactive: false\n")
+	fmt.Print("status:\n")
+	fmt.Printf("  expirationTimestamp: %s\n", string(expiry))
+	fmt.Printf("  token: %s\n", svid.Marshal())
 }

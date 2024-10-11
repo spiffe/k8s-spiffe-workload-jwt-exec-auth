@@ -36,8 +36,11 @@ Remove the "user" block from the "users" section and replace it with:
     exec:
       apiVersion: "client.authentication.k8s.io/v1"
       command: "k8s-spiffe-workload-jwt-exec-auth"
+      interactiveMode: Never
       # To customize, uncomment and change the settings below
       #env:
-      #  SPIFFE_ENDPOINT_SOCKET: "unix:///tmp/spire-agent/public/api.sock"
-      #  SPIFFE_JWT_AUDIENCE: "k8s"
+      #  - name: SPIFFE_ENDPOINT_SOCKET
+      #    value: "unix:///var/run/spire/agent/sockets/main/public/api.sock"
+      #  - name: SPIFFE_JWT_AUDIENCE
+      #    value: "k8s-one"
 ```
