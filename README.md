@@ -1,8 +1,15 @@
 # k8s-spiffe-workload-jwt-exec-auth
-A Kubernetes exec auth plugin using the spiffe workload api to get jwts for auth
+
+[![Apache 2.0 License](https://img.shields.io/github/license/spiffe/helm-charts)](https://opensource.org/licenses/Apache-2.0)
+[![Development Phase](https://github.com/spiffe/spiffe/blob/main/.img/maturity/dev.svg)](https://github.com/spiffe/spiffe/blob/main/MATURITY.md#development)
+
+A Kubernetes exec auth plugin using the SPIFFE Workload API to get JWTs for auth.
 
 ## Building
+
+```
 go build .
+```
 
 ## Usage
 
@@ -26,11 +33,29 @@ jwt:
       prefix: ""
 ```
 
-### Kubeconfig file
+### User kubeconfig file
 
-Start with a copy of your kubernetes clusters /etc/kubernetes/admin.conf file.
+Start with a copy of your Kubernetes clusters /etc/kubernetes/admin.conf file.
 
 Remove the "user" block from the "users" section and replace it with:
+```yaml
+  user:
+    exec:
+      apiVersion: "client.authentication.k8s.io/v1"
+      command: "k8s-spiffe-workload-jwt-exec-auth"
+      interactiveMode: Never
+      # To customize, uncomment and change the settings below
+      #env:
+      #  - name: SPIFFE_ENDPOINT_SOCKET
+      #    value: "unix:///var/run/spire/agent/sockets/main/public/api.sock"
+      #  - name: SPIFFE_JWT_AUDIENCE
+      #    value: "k8s-one"
+```
+
+### Kubelet kubeconfig file
+
+Modify `/etc/kubernetes/kubelet.conf`, and remove `client-certificate` and `client-key` settings. Then add the following exec block to user:
+
 ```yaml
   user:
     exec:
