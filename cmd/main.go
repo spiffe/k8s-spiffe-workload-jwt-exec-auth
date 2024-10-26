@@ -41,7 +41,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	d := svid.Expiry.Sub(time.Now()) / 2
+	d := time.Until(svid.Expiry) / 2
 	expiry, err := metav1.NewTime(svid.Expiry.Add(d)).MarshalJSON()
 	if err != nil {
 		log.Fatal(err)
