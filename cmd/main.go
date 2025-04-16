@@ -2,9 +2,9 @@ package main
 
 import (
 	"context"
-	"os"
 	"fmt"
 	"log"
+	"os"
 	"time"
 
 	"github.com/spiffe/go-spiffe/v2/svid/jwtsvid"
@@ -22,6 +22,11 @@ func main() {
 	audience, ok := os.LookupEnv("SPIFFE_JWT_AUDIENCE")
 	if !ok {
 		audience = "k8s"
+	}
+
+	execCredentialVersion, ok := os.LookupEnv("EXEC_CREDENTIAL_VERSION")
+	if !ok {
+		execCredentialVersion = "v1"
 	}
 
 	ctx := context.Background()
@@ -46,7 +51,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	fmt.Print("apiVersion: client.authentication.k8s.io/v1\n")
+	fmt.Printf("apiVersion: client.authentication.k8s.io/%s\n", execCredentialVersion)
 	fmt.Print("kind: ExecCredential\n")
 	fmt.Print("spec:\n")
 	fmt.Print(" interactive: false\n")
