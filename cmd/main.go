@@ -46,8 +46,8 @@ func main() {
 		log.Fatal(err)
 	}
 
-	d := time.Until(svid.Expiry) / 2
-	expiry, err := metav1.NewTime(svid.Expiry.Add(d)).MarshalJSON()
+	now := time.Now()
+	expiry, err := metav1.NewTime(credentialExpiration(now, svid.Expiry)).MarshalJSON()
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -58,4 +58,8 @@ func main() {
 	fmt.Print("status:\n")
 	fmt.Printf("  expirationTimestamp: %s\n", string(expiry))
 	fmt.Printf("  token: %s\n", svid.Marshal())
+}
+
+func credentialExpiration(now, jwtExpiry time.Time) time.Time {
+	return now.Add(jwtExpiry.Sub(now) / 2)
 }
