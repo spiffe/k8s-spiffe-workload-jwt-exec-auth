@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"log"
 	"os"
@@ -14,6 +15,10 @@ import (
 )
 
 func main() {
+	timeout := flag.Duration("timeout", 0,
+		"max time to wait for the JWT-SVID from the workload API socket (e.g. 5s). 0 = wait forever")
+	flag.Parse()
+
 	socketPath, ok := os.LookupEnv("SPIFFE_ENDPOINT_SOCKET")
 	if !ok {
 		socketPath = "unix:///tmp/spire-agent/public/api.sock"
@@ -30,6 +35,11 @@ func main() {
 	}
 
 	ctx := context.Background()
+	if *timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, *timeout)
+		defer cancel()
+	}
 
 	jwtSource, err := workloadapi.NewJWTSource(
 		ctx,
