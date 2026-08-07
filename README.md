@@ -3,7 +3,9 @@
 [![Apache 2.0 License](https://img.shields.io/github/license/spiffe/helm-charts)](https://opensource.org/licenses/Apache-2.0)
 [![Development Phase](https://github.com/spiffe/spiffe/blob/main/.img/maturity/dev.svg)](https://github.com/spiffe/spiffe/blob/main/MATURITY.md#development)
 
-A Kubernetes exec auth plugin using the SPIFFE Workload API to get JWTs for auth.
+A Kubernetes exec auth plugin that gets a SPIFFE JWT-SVID for authentication,
+either from the SPIFFE Workload API (default) or by minting one from the SPIRE
+Server admin API.
 
 ## Building
 
@@ -18,16 +20,29 @@ kubeconfig `exec` block:
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `SPIFFE_ENDPOINT_SOCKET` | `unix:///tmp/spire-agent/public/api.sock` | Address of the SPIFFE Workload API socket. |
+| `SPIFFE_JWT_SOURCE` | `workload-api` | Where the JWT-SVID comes from: `workload-api` or `server-admin-api`. See below. |
+| `SPIFFE_ENDPOINT_SOCKET` | `unix:///tmp/spire-agent/public/api.sock` | Address of the SPIFFE Workload API socket. `workload-api` source only. |
 | `SPIFFE_JWT_AUDIENCE` | `k8s` | Audience requested for the JWT-SVID. Must match an entry in the API server's `AuthenticationConfiguration`. |
-| `SPIFFE_JWT_HINT` | *(unset)* | Selects which JWT-SVID to use by hint, when the Workload API returns more than one. See below. |
+| `SPIFFE_JWT_HINT` | *(unset)* | Selects which JWT-SVID to use by hint, when the Workload API returns more than one. `workload-api` source only. See below. |
 | `EXEC_CREDENTIAL_VERSION` | `v1` | The `client.authentication.k8s.io` version emitted. Use `v1beta1` for older clients. Must match the `apiVersion` in the `exec` block. |
+| `SPIRE_SERVER_SOCKET` | `unix:///tmp/spire-server/private/api.sock` | Address of the SPIRE Server admin API socket. `server-admin-api` source only. |
+| `SPIFFE_ID` | *(unset)* | The SPIFFE ID to mint a JWT-SVID for. Required for the `server-admin-api` source. |
 
 There is also one flag, passed via `args:` rather than `env:`:
 
 | Flag | Default | Description |
 | --- | --- | --- |
-| `-timeout` | `0` | Max time to wait for the JWT-SVID from the Workload API socket, e.g. `-timeout=5s`. `0` waits forever. |
+| `-timeout` | `0` | Max time to wait for the JWT-SVID, e.g. `-timeout=5s`. `0` waits forever. |
+
+### Choosing a JWT source with `SPIFFE_JWT_SOURCE`
+
+By default the plugin fetches the JWT-SVID of the calling workload from the SPIFFE Workload API. Set
+`SPIFFE_JWT_SOURCE` to `server-admin-api` to instead mint a JWT-SVID for `SPIFFE_ID` directly from the
+SPIRE Server admin API socket (`SPIRE_SERVER_SOCKET`).
+
+The `server-admin-api` source is useful where the Workload API is not reachable but the server admin
+socket is — for example an exec consumer co-located with spire-server — and where the credential
+should not depend on agent attestation. That consumer must have access to the server admin socket.
 
 ### Selecting an identity with `SPIFFE_JWT_HINT`
 
