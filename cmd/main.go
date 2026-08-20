@@ -2,11 +2,17 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log"
+	"math"
+	"net/http"
+	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -33,6 +39,13 @@ const (
 	sourceServerAdminAPI = "server-admin-api"
 )
 
+// RFC 8693 (https://www.rfc-editor.org/rfc/rfc8693) token exchange constants.
+const (
+	grantTypeTokenExchange = "urn:ietf:params:oauth:grant-type:token-exchange"
+	// A JWT-SVID is always a JWT, whichever source produced it.
+	tokenTypeJWT = "urn:ietf:params:oauth:token-type:jwt"
+)
+
 func main() {
 	// client-go inherits this process's stderr and reports only "failed with exit
 	// code N", so anything logged here is the operator's entire diagnostic. Drop
@@ -41,7 +54,7 @@ func main() {
 	log.SetPrefix("k8s-spiffe-workload-jwt-exec-auth: ")
 
 	timeout := flag.Duration("timeout", 0,
-		"max time to wait for the JWT-SVID (e.g. 5s). 0 = wait forever")
+		"max time to wait for the credential, including any token exchange (e.g. 5s). 0 = wait forever")
 	flag.Parse()
 
 	audience, ok := os.LookupEnv("SPIFFE_JWT_AUDIENCE")
@@ -57,6 +70,14 @@ func main() {
 	source, ok := os.LookupEnv("SPIFFE_JWT_SOURCE")
 	if !ok {
 		source = sourceWorkloadAPI
+	}
+
+	// Validated before the JWT-SVID is fetched, so a typo fails immediately.
+	exchangeEndpoint := os.Getenv("SPIFFE_JWT_EXCHANGE_ENDPOINT")
+	if exchangeEndpoint != "" {
+		if err := validateExchangeEndpoint(exchangeEndpoint); err != nil {
+			log.Fatal(err)
+		}
 	}
 
 	ctx := context.Background()
@@ -102,6 +123,14 @@ func main() {
 	}
 	if err != nil {
 		log.Fatal(err)
+	}
+
+	if exchangeEndpoint != "" {
+		exchangeAudience := os.Getenv("SPIFFE_JWT_EXCHANGE_AUDIENCE")
+		token, expiry, err = exchangeToken(ctx, exchangeEndpoint, token, exchangeAudience)
+		if err != nil {
+			log.Fatalf("token exchange failed: %v", err)
+		}
 	}
 
 	now := time.Now()
@@ -201,4 +230,121 @@ func mintFromServerAdminAPI(ctx context.Context, target, spiffeID, audience stri
 		return "", time.Time{}, errors.New("no JWT-SVID in mint response")
 	}
 	return resp.Svid.Token, time.Unix(resp.Svid.ExpiresAt, 0), nil
+}
+
+// validateExchangeEndpoint rejects an endpoint this plugin should not send a
+// JWT-SVID to. TLS is not configurable: the credential leaves the machine here.
+func validateExchangeEndpoint(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("invalid SPIFFE_JWT_EXCHANGE_ENDPOINT %q: %w", raw, err)
+	}
+	if u.Scheme != "https" {
+		return fmt.Errorf("SPIFFE_JWT_EXCHANGE_ENDPOINT %q must be an https:// URL", raw)
+	}
+	if u.Host == "" {
+		return fmt.Errorf("SPIFFE_JWT_EXCHANGE_ENDPOINT %q has no host", raw)
+	}
+	return nil
+}
+
+// exchangeResponse is the part of the RFC 8693 section 2.2.1 response used here.
+type exchangeResponse struct {
+	AccessToken string `json:"access_token"`
+	ExpiresIn   int64  `json:"expires_in"`
+}
+
+// exchangeError is the RFC 6749 section 5.2 error response RFC 8693 defers to.
+type exchangeError struct {
+	Error       string `json:"error"`
+	Description string `json:"error_description"`
+}
+
+// exchangeToken trades subjectToken for one the exchange at endpoint issues,
+// using the RFC 8693 grant. audience is sent only when set: RFC 8693 makes it
+// optional, and exchanges split on whether they require it or derive it from the
+// subject token and reject a request carrying it.
+func exchangeToken(ctx context.Context, endpoint, subjectToken, audience string) (string, time.Time, error) {
+	form := url.Values{
+		"grant_type":         {grantTypeTokenExchange},
+		"subject_token":      {subjectToken},
+		"subject_token_type": {tokenTypeJWT},
+	}
+	if audience != "" {
+		form.Set("audience", audience)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(form.Encode()))
+	if err != nil {
+		return "", time.Time{}, err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	// Redirects are refused: validateExchangeEndpoint checks only the first hop,
+	// and net/http replays a POST body on a 307 or 308 without requiring the target
+	// to still be https. A token endpoint has no reason to redirect.
+	client := &http.Client{
+		CheckRedirect: func(req *http.Request, _ []*http.Request) error {
+			return fmt.Errorf("the exchange redirected to %q; a token endpoint must not redirect", req.URL.Redacted())
+		},
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", time.Time{}, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	// Bounds memory, not time; -timeout bounds how long the endpoint may take.
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return "", time.Time{}, fmt.Errorf("reading the exchange response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		var e exchangeError
+		if json.Unmarshal(body, &e) != nil || e.Error == "" {
+			return "", time.Time{}, fmt.Errorf("HTTP %d: %s", resp.StatusCode, quoteForTerminal(string(body)))
+		}
+		if e.Description == "" {
+			return "", time.Time{}, fmt.Errorf("%s (HTTP %d)", quoteForTerminal(e.Error), resp.StatusCode)
+		}
+		return "", time.Time{}, fmt.Errorf("%s: %s (HTTP %d)", quoteForTerminal(e.Error), quoteForTerminal(e.Description), resp.StatusCode)
+	}
+
+	var parsed exchangeResponse
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		// A 200 body that fails to decode still holds the access token, so print it
+		// only when it is not JSON at all and so cannot have come from the exchange.
+		if !json.Valid(body) {
+			return "", time.Time{}, fmt.Errorf("parsing the exchange response: %w: %s", err, quoteForTerminal(string(body)))
+		}
+		return "", time.Time{}, fmt.Errorf("parsing the exchange response: %w", err)
+	}
+	if parsed.AccessToken == "" {
+		return "", time.Time{}, errors.New("the exchange response has no access_token")
+	}
+	// A newline here would corrupt the ExecCredential written to stdout, which is
+	// assembled by hand. RFC 6749 appendix A.12 limits an access token to %x20-7E,
+	// so a conforming token always passes this check.
+	if strings.ContainsFunc(parsed.AccessToken, func(r rune) bool { return r < 0x20 || r > 0x7e }) {
+		return "", time.Time{}, errors.New("the exchange returned an access_token with characters outside printable ASCII")
+	}
+	// expires_in is only RECOMMENDED by RFC 8693, but without it there is no expiry
+	// to report. The upper bound keeps the multiplication below from overflowing.
+	if parsed.ExpiresIn <= 0 || parsed.ExpiresIn > math.MaxInt32 {
+		return "", time.Time{}, fmt.Errorf("the exchange response has no usable expires_in (got %d), which is required to report a credential expiry", parsed.ExpiresIn)
+	}
+
+	return parsed.AccessToken, time.Now().Add(time.Duration(parsed.ExpiresIn) * time.Second), nil
+}
+
+// quoteForTerminal makes exchange-supplied bytes safe and short for stderr.
+func quoteForTerminal(s string) string {
+	const max = 256
+	s = strings.TrimSpace(s)
+	if len(s) > max {
+		s = s[:max] + "..."
+	}
+	return strconv.Quote(s)
 }

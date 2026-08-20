@@ -5,7 +5,8 @@
 
 A Kubernetes exec auth plugin that gets a SPIFFE JWT-SVID for authentication,
 either from the SPIFFE Workload API (default) or by minting one from the SPIRE
-Server admin API.
+Server admin API. It can optionally exchange that JWT-SVID for a token issued by
+a token exchange before presenting it.
 
 ## Building
 
@@ -22,17 +23,19 @@ kubeconfig `exec` block:
 | --- | --- | --- |
 | `SPIFFE_JWT_SOURCE` | `workload-api` | Where the JWT-SVID comes from: `workload-api` or `server-admin-api`. See below. |
 | `SPIFFE_ENDPOINT_SOCKET` | `unix:///tmp/spire-agent/public/api.sock` | Address of the SPIFFE Workload API socket. `workload-api` source only. |
-| `SPIFFE_JWT_AUDIENCE` | `k8s` | Audience requested for the JWT-SVID. Must match an entry in the API server's `AuthenticationConfiguration`. |
+| `SPIFFE_JWT_AUDIENCE` | `k8s` | Audience requested for the JWT-SVID. Must match an entry in the API server's `AuthenticationConfiguration`, unless an exchange requires otherwise. |
 | `SPIFFE_JWT_HINT` | *(unset)* | Selects which JWT-SVID to use by hint, when the Workload API returns more than one. `workload-api` source only. See below. |
 | `EXEC_CREDENTIAL_VERSION` | `v1` | The `client.authentication.k8s.io` version emitted. Use `v1beta1` for older clients. Must match the `apiVersion` in the `exec` block. |
 | `SPIRE_SERVER_SOCKET` | `unix:///tmp/spire-server/private/api.sock` | Address of the SPIRE Server admin API socket. `server-admin-api` source only. |
 | `SPIFFE_ID` | *(unset)* | The SPIFFE ID to mint a JWT-SVID for. Required for the `server-admin-api` source. |
+| `SPIFFE_JWT_EXCHANGE_ENDPOINT` | *(unset)* | RFC 8693 token exchange endpoint, `https://` only. See below. |
+| `SPIFFE_JWT_EXCHANGE_AUDIENCE` | *(unset)* | RFC 8693 `audience` for the issued token, sent only when set. See below. |
 
 There is also one flag, passed via `args:` rather than `env:`:
 
 | Flag | Default | Description |
 | --- | --- | --- |
-| `-timeout` | `0` | Max time to wait for the JWT-SVID, e.g. `-timeout=5s`. `0` waits forever. |
+| `-timeout` | `0` | Max time to wait for the credential, including any token exchange, e.g. `-timeout=5s`. `0` waits forever. |
 
 ### Choosing a JWT source with `SPIFFE_JWT_SOURCE`
 
@@ -61,6 +64,45 @@ Set `SPIFFE_JWT_HINT` to pin a specific one:
 
 Matching is exact — no case folding or whitespace trimming. SPIRE keeps only the first SVID for each
 non-empty hint, so hints are effectively unique.
+
+### Exchanging the JWT-SVID with `SPIFFE_JWT_EXCHANGE_ENDPOINT`
+
+Some clusters trust a token exchange as their issuer instead of trusting SPIRE directly, and a
+JWT-SVID is not a credential those clusters accept. Set `SPIFFE_JWT_EXCHANGE_ENDPOINT` and the
+plugin trades the JWT-SVID for a token from that exchange, using the
+[RFC 8693](https://www.rfc-editor.org/rfc/rfc8693) token-exchange grant, then presents that
+instead:
+
+```
+grant_type=urn:ietf:params:oauth:grant-type:token-exchange
+subject_token=<the JWT-SVID>
+subject_token_type=urn:ietf:params:oauth:token-type:jwt
+```
+
+This works with either `SPIFFE_JWT_SOURCE`.
+
+There are two audiences, and which one you need depends on the exchange. `SPIFFE_JWT_AUDIENCE` is
+the audience SPIRE puts in the JWT-SVID. `SPIFFE_JWT_EXCHANGE_AUDIENCE` is the `audience` parameter
+sent to the exchange, and is only sent if you set it. Google Cloud's STS requires that parameter.
+Other exchanges take the audience from the subject token and reject a request that sends one.
+Either way, the token you end up with has to carry the audience in the cluster's
+`AuthenticationConfiguration`.
+
+If the exchange fails, the plugin exits non-zero and prints the exchange's own `error` and
+`error_description`. It does not fall back to the unexchanged JWT-SVID.
+
+- **The endpoint sees a live JWT-SVID** on every refresh, and it comes from a kubeconfig, which
+  people copy and share. Treat it as trusted. It has to be `https://`, and redirects are refused —
+  following one would send the JWT-SVID to a host that was never checked. For a private CA, add
+  that CA to the system trust store.
+- **`expires_in` is required**, even though RFC 8693 only recommends it. Without it there is no
+  expiry to report, and client-go caches the credential for the life of the process and only
+  refreshes it after a 401.
+- **`-timeout` covers the exchange**, not just the fetch. Set it — the default waits forever, and
+  this is a call to a remote host.
+- **No client authentication is sent.** RFC 8693 leaves that to the exchange, and the JWT-SVID is
+  itself the credential. If an exchange wants a client secret or client certificate on top of the
+  subject token, this plugin cannot talk to it.
 
 ## Usage
 
