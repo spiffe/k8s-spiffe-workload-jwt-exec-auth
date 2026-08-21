@@ -144,7 +144,7 @@ func main() {
 	fmt.Print(" interactive: false\n")
 	fmt.Print("status:\n")
 	fmt.Printf("  expirationTimestamp: %s\n", string(expiration))
-	fmt.Printf("  token: %s\n", token)
+	fmt.Printf("  token: %q\n", token)
 }
 
 func credentialExpiration(now, jwtExpiry time.Time) time.Time {
