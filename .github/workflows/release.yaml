@@ -18,6 +18,13 @@ jobs:
           fetch-depth: 0
       - name: Set up Go
         uses: actions/setup-go@v5
+        with:
+          # Build releases on the newest patch of the go.mod line, so a
+          # released binary does not ship a standard library with known
+          # vulnerabilities. Without check-latest the toolchain resolves to
+          # exactly the go.mod version.
+          go-version-file: go.mod
+          check-latest: true
       - uses: ko-build/setup-ko@v0.6
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v6
