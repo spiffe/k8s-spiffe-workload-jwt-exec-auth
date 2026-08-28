@@ -8,6 +8,10 @@ either from the SPIFFE Workload API (default) or by minting one from the SPIRE
 Server admin API. It can optionally exchange that JWT-SVID for a token issued by
 a token exchange before presenting it.
 
+## Server config
+
+If you want to use this plugin along with the discovery provider secured by SPIFFE rather then webPKI, you can configure the apiserver using https://github.com/spiffe/k8s-spiffe-workload-auth-config.
+
 ## Building
 
 ```
