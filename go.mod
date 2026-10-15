@@ -3,7 +3,7 @@ module github.com/spiffe/k8s-spiffe-workload-jwt-exec-auth
 go 1.27.2
 
 require (
-	github.com/spiffe/go-spiffe/v2 v2.8.2
+	github.com/spiffe/go-spiffe/v2 v2.9.0
 	github.com/spiffe/spire-api-sdk v1.15.3
 	google.golang.org/grpc v1.84.0
 	k8s.io/apimachinery v0.37.1
