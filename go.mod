@@ -1,6 +1,6 @@
 module github.com/spiffe/k8s-spiffe-workload-jwt-exec-auth
 
-go 1.27.2
+go 1.27.3
 
 require (
 	github.com/spiffe/go-spiffe/v2 v2.9.0
